@@ -2,3 +2,5 @@
 .Rhistory
 .RData
 .Ruserdata
+snp_data.tsv
+PhenotypePredictions.tsv
