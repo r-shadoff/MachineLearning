@@ -1,4 +1,6 @@
-# Phenotype Prediction Evaluation
+This repo is IN PROGRESS, but will eventually include multiple scripts for computing a variety of biostatistics.
+
+## Project 1: Phenotype Prediction Evaluation (biostats_calc.R)
 This code is a work in progress!
 
 ## Goal
