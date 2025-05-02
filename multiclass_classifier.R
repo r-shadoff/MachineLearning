@@ -1,3 +1,8 @@
+# TO DO: Clean up code. 
+# TO DO: Add evaluation metrics computed based on the provided predictions, not the classifier that was added.
+# TO DO: Find out how to generate a report that includes the ROC AUC curves and confusion matrix stats. 
+# TO DO: Find out how to make this script easy to edit and run for anyone! 
+
 library(tidyverse)
 library(dplyr)
 library(caret)
