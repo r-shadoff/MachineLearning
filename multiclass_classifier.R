@@ -43,7 +43,6 @@ hair_levels <- union(unique(combined_df_clean$Hair.Predicted), unique(combined_d
 combined_df_clean$Hair.Predicted <- factor(combined_df_clean$Hair.Predicted, levels = hair_levels)
 combined_df_clean$Hair.Self.ID <- factor(combined_df_clean$Hair.Self.ID, levels = hair_levels)
 
-
 # Train test split
 set.seed(412)
 train_index_hair <- createDataPartition(combined_df_clean$Hair.Self.ID, p=0.8, list=FALSE)
@@ -52,9 +51,6 @@ test_data_hair <- combined_df_clean[-train_index_hair, ]
 fit_control_hair <- trainControl(method = "cv", number = 5, sampling = "up") # Upsampled due to low counts in minority class (blonde) 
 
 # Remove SNPs with only one level
-
-
-
 valid_SNP_cols_hair <- SNP_cols[sapply(train_data_hair[ , SNP_cols], function(x) length(unique(x)) > 1)]
 
 SNP_str_hair = paste(valid_SNP_cols_hair, collapse = " + ")
@@ -65,6 +61,7 @@ model_hair <- train(as.formula(model_formula_hair),
                     trControl = fit_control_hair)
 pred_hair <- predict(model_hair, newdata = test_data_hair)
 prob_hair <- predict(model_hair, newdata = test_data_hair, type = "prob")
+
 # Eye Colour Model
 eye_levels <- union(unique(combined_df_clean$Eye.Predicted), unique(combined_df_clean$Eye.Self.ID))
 combined_df_clean$Eye.Predicted <- factor(combined_df_clean$Eye.Predicted, levels = eye_levels)
@@ -95,7 +92,7 @@ prob_eye <- predict(model_eye, newdata = test_data_eye, type = "prob")
 
 
 
-# Evaluation
+# Eye - ML Model
 conf_matrix_eye <- confusionMatrix(pred_eye, test_data_eye$Eye.Self.ID)
 print(conf_matrix_eye)
 # Actual labels
@@ -123,9 +120,7 @@ for (class in levels(true_labels)) {
 print(auc_list)
 
 
-# Hair
-
-
+# Hair - ML model
 conf_matrix_hair <- confusionMatrix(pred_hair, test_data_hair$Hair.Self.ID)
 print(conf_matrix_hair)
 
@@ -153,7 +148,11 @@ for (class in levels(true_labels)) {
 }
 print(auc_list)
 
+# Eye - Illumina predictions 
+conf_matrix_eye_Illumina <- confusionMatrix(combined_df_clean$Eye.Predicted, combined_df_clean$Eye.Self.ID)
+print(conf_matrix_eye)
 
 
-
-
+# Hair - Illumina predictions 
+conf_matrix_eye_Illumina <- confusionMatrix(combined_df_clean$Hair.Predicted, combined_df_clean$Hair.Self.ID)
+print(conf_matrix_eye)
