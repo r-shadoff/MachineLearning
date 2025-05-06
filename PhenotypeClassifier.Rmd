@@ -1,5 +1,5 @@
 ---
-title: "Hair and Eye Colour Classifier Comparison"
+title: "Using a random forest classifier to generate hair and eye colour predictions from SNP data"
 output:
   pdf_document: default
   html_document: default
@@ -8,6 +8,30 @@ editor_options:
     wrap: 72
 ---
 
+## Goal
+
+This project evaluates the ability of a random-forest classifier to
+correctly assign hair colour and eye colour labels to samples using
+genotype data collected from 24 phenotype-informative SNP loci. While
+the performance of phenotype classifiers is quite high in homogeneous
+populations, the dataset used to test the RF classifier here includes
+admixed individuals only. The exploration of admixed datasets is
+essential to ensuring phenotype prediction can be used as a fair and
+accurate tool in forensic contexts.
+
+## Hair and Eye Colour Classes
+
+There are three possible hair colours that can be assigned to a
+sample: 1. Brown 2. Black 3. Blonde
+
+There are three possible eye colours that can be assigned to a
+sample: 1. Brown 2. Blue 3. Intermediate - This includes any non-brown
+and non-blue eye colour, such as grey, green, and hazel.
+
+The true hair colour and eye colour for each sample will be used to
+determine if the classifier correctly identifies the group a sample
+belongs to.
+
 ```{r include=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
 ```
@@ -15,60 +39,68 @@ knitr::opts_chunk$set(echo = FALSE)
 ```{r include=FALSE}
 library(caret)
 library(pROC) 
+library(patchwork)
 library(knitr)
 library(tidyverse)
 library(dplyr)
 library(reshape2)
-
+library(kableExtra)
 ```
 
 ```{r include=FALSE}
-df <- read.csv("PhenotypePredictions.tsv", sep="\t")
+# Phenotype Data ----
+phenotypes_df <- read.csv("PhenotypePredictions.tsv", sep="\t")
 
-# Clean up formatting
-df_clean <- df %>%
+phenotypes_clean <- phenotypes_df %>%
   mutate(Eye.Self.ID = recode(Eye.Self.ID,
                               "Intermediate - Green" = "Intermediate",
                               "Intermediate - Hazel" = "Intermediate",
                               "brown" = "Brown"))
-df_clean <- df_clean %>%
+phenotypes_clean <- phenotypes_clean %>%
   mutate(Hair.Predicted = recode(Hair.Predicted,
                               "black" = "Black"))
 
-df_clean <- df_clean %>%
+phenotypes_clean <- phenotypes_clean %>%
   mutate(Eye.Predicted = recode(Eye.Predicted,
                                  "brown" = "Brown"))
 
-lapply(df_clean, unique) # Check if additional values need cleaning
+lapply(phenotypes_clean, unique) # Check for improperly formatted values 
 
-# Add SNP data 
+# Genotype Data ----
 snp_df <- read.csv("snp_data.tsv", sep="\t")
-snp_df$X <- sapply(snp_df$X, as.numeric)
-combined_df <- left_join(df_clean, snp_df, by = c("Sample" = "X"))
-combined_df_clean <- na.omit(combined_df)
-
+snp_df$X <- sapply(snp_df$X, as.numeric) # X column has sample IDs
+combined_df <- left_join(phenotypes_clean, snp_df, by = c("Sample" = "X")) # Combine using sample ID as key
+combined_df_clean <- na.omit(combined_df) # Removed all NAs because only one sample is missing genotype data
 SNP_cols = colnames(combined_df_clean[6:29])
+
+# Transform data for model training ----
+# Convert SNPs into levels
 for (col in SNP_cols) {
   combined_df_clean[[col]] <- factor(combined_df_clean[[col]], levels = unique(combined_df_clean[[col]]))
 }
 
-# Hair Colour Model
-hair_levels <- union(unique(combined_df_clean$Hair.Predicted), unique(combined_df_clean$Hair.Self.ID))
+# Convert phenotypes into factors 
+hair_levels <- unique(combined_df_clean$Hair.Self.ID)
+eye_levels <- unique(combined_df_clean$Eye.Self.ID)
+
 combined_df_clean$Hair.Predicted <- factor(combined_df_clean$Hair.Predicted, levels = hair_levels)
 combined_df_clean$Hair.Self.ID <- factor(combined_df_clean$Hair.Self.ID, levels = hair_levels)
 
-# Train test split
+combined_df_clean$Eye.Predicted <- factor(combined_df_clean$Eye.Predicted, levels = eye_levels)
+combined_df_clean$Eye.Self.ID <- factor(combined_df_clean$Eye.Self.ID, levels = eye_levels)
+
+# Train RF Classifier - Hair ----
 set.seed(412)
-train_index_hair <- createDataPartition(combined_df_clean$Hair.Self.ID, p=0.8, list=FALSE)
+train_index_hair <- createDataPartition(combined_df_clean$Hair.Self.ID, p=0.8, list=FALSE) # high p value to capture minority class in training data
 train_data_hair <- combined_df_clean[train_index_hair, ]
 test_data_hair <- combined_df_clean[-train_index_hair, ]
-fit_control_hair <- trainControl(method = "cv", number = 5, sampling = "up") # Upsampled due to low counts in minority class (blonde) 
+fit_control_hair <- trainControl(method = "cv", number = 5, sampling = "up") # Up sampled due to low counts in minority class (blonde) 
 
-# Remove SNPs with only one level
+# Remove SNPs with only one level (aka all samples have the same genotype at this SNP)
 valid_SNP_cols_hair <- SNP_cols[sapply(train_data_hair[ , SNP_cols], function(x) length(unique(x)) > 1)]
-
 SNP_str_hair = paste(valid_SNP_cols_hair, collapse = " + ")
-model_formula_hair <- paste("Hair.Self.ID ~", SNP_str_hair)
+
+model_formula_hair <- paste("Hair.Self.ID ~", SNP_str_hair) # relationship between hair and SNPs
 model_hair <- train(as.formula(model_formula_hair), 
                     data = train_data_hair,
                     method = "rf",
@@ -76,55 +108,104 @@ model_hair <- train(as.formula(model_formula_hair),
 pred_hair <- predict(model_hair, newdata = test_data_hair)
 prob_hair <- predict(model_hair, newdata = test_data_hair, type = "prob")
 
-# Eye Colour Model
-eye_levels <- union(unique(combined_df_clean$Eye.Predicted), unique(combined_df_clean$Eye.Self.ID))
-combined_df_clean$Eye.Predicted <- factor(combined_df_clean$Eye.Predicted, levels = eye_levels)
-combined_df_clean$Eye.Self.ID <- factor(combined_df_clean$Eye.Self.ID, levels = eye_levels)
-
-# Train test split
+# Train RF Classifier - Eyes ----
 set.seed(412)
-train_index_eye <- createDataPartition(combined_df_clean$Eye.Self.ID, p=0.8, list=FALSE)
-
+train_index_eye <- createDataPartition(combined_df_clean$Eye.Self.ID, p=0.8, list=FALSE) # High p value to capture minority class in training data 
 train_data_eye <- combined_df_clean[train_index_eye, ]
-
 test_data_eye <- combined_df_clean[-train_index_eye, ]
-
-fit_control_eye <- trainControl(method = "cv", number = 5, sampling = "up") # Upsampled due to low counts in minority class (intermediate) 
+fit_control_eye <- trainControl(method = "cv", number = 5, sampling = "up") # Up sampled due to low counts in minority class (intermediate) 
 
 # Remove SNPs with only one level
 valid_SNP_cols_eye <- SNP_cols[sapply(train_data_eye[ , SNP_cols], function(x) length(unique(na.omit(x))) > 1)]
-
-
 SNP_str_eye = paste(valid_SNP_cols_eye, collapse = " + ")
-model_formula_eye <- paste("Eye.Self.ID ~", SNP_str_eye)
+
+model_formula_eye <- paste("Eye.Self.ID ~", SNP_str_eye) # Relationship between eye colour and SNPs
 model_eye <- train(as.formula(model_formula_eye), 
                     data = train_data_eye,
                     method = "rf",
                     trControl = fit_control_eye)
+
 pred_eye <- predict(model_eye, newdata = test_data_eye)
 prob_eye <- predict(model_eye, newdata = test_data_eye, type = "prob")
+```
 
-conf_matrix_hair <- confusionMatrix(pred_hair,test_data_hair$Hair.Self.ID)
+```{r}
+# Create confusion matrices
+conf_matrix_hair <- confusionMatrix(pred_hair, test_data_hair$Hair.Self.ID)
 conf_matrix_eye <- confusionMatrix(pred_eye, test_data_eye$Eye.Self.ID)
-
-conf_matrix_eye_Illumina <- confusionMatrix(combined_df_clean$Eye.Predicted, combined_df_clean$Eye.Self.ID)
-conf_matrix_hair_Illumina <- confusionMatrix(combined_df_clean$Hair.Predicted, combined_df_clean$Hair.Self.ID)
 ```
 
-```{r}
-kable(conf_matrix_hair$table, caption = "Hair Colour - ML Model")
-```
+## Random Forest Classifier Performance
+
+The performance of hair and eye colour predictions were assessed
+separately.
+
+### Hair Colour
+
+Due to the small number of blonde samples, the metrics in Table 2 for
+the blonde class are heavily skewed.
 
 ```{r}
-kable(conf_matrix_eye$table, caption = "Eye Colour - ML Model")
+# Format confusion matrix table ----
+conf_table_hair <- conf_matrix_hair$table
+conf_df_hair <- as.data.frame.matrix(conf_table_hair)
+kable(conf_df_hair, caption = "Hair Colour Confusion Matrix", booktabs = TRUE, escape = FALSE) %>%
+  kable_styling(latex_options = c("hold_position")) %>%
+  add_header_above(c("True" = 1, "Predicted" = 3))
+
+# Format classifier metrics table ----
+hair_metrics <- round(conf_matrix_hair$byClass[, 1:7], 3)
+kable(hair_metrics, caption = "Hair Colour Classifier Metrics")
+
+# ROC AUC Curves ----
+true_labels_hair <- test_data_hair$Hair.Self.ID 
+actual_mat_hair <- model.matrix(~ true_labels_hair - 1) 
+colnames(actual_mat_hair) <- levels(true_labels_hair)
 ```
 
-```{r}
-kable(conf_matrix_hair_Illumina$table, caption = "Hair Colour - Illumina Predictions")
+```{r roc-plots}
+# ROC plots
+
+roc_list_hair <-list() 
+auc_list_hair <- c()
+roc_list_plot_hair <- list()
+roc_objects <- list()
+auc_values <- list()
+
+# Create plot for each class
+for (class in levels(true_labels_hair)) {
+  roc_obj <- suppressMessages(roc(actual_mat_hair[, class], prob_hair[, class]) )
+  auc_val <- auc(roc_obj) 
+  roc_plot <- ggroc(roc_obj) +
+    ggtitle(paste("Hair -", class, "\nAUC:",round(auc_val, 3))) +
+    theme_minimal() +
+    theme(plot.title = element_text(size = 10)) +
+    xlab("False Positive Rate") +
+    ylab("True Positive Rate")
+  roc_list_hair[[class]] <- roc_obj 
+  auc_list_hair[class] <- auc_val 
+  roc_list_plot_hair[[class]] <- roc_plot
+}
+roc_list_plot_hair[["Blonde"]] | roc_list_plot_hair[["Brown"]] | roc_list_plot_hair[["Black"]]
+
+kable(as.data.frame(auc_list_hair), col.names = c("AUC"), caption ="Hair Colour - AUC per Class")
+
 ```
 
+### Eye Colour
+Due to a low number of samples in the intermediate class, the performance metrics for this class shown in Table 5 are heavily skewed.
+
 ```{r}
-kable(conf_matrix_eye_Illumina$table, caption = "Eye Colour - Illumina Predictions")
+# Format confusion matrix table ----
+conf_table_eye <- conf_matrix_eye$table
+conf_df_eye <- as.data.frame.matrix(conf_table_eye)
+kable(conf_df_eye, caption = "Eye Colour Confusion Matrix", booktabs = TRUE, escape = FALSE) %>%
+  kable_styling(latex_options = c("hold_position")) %>%
+  add_header_above(c("True" = 1, "Predicted" = 3))
+
+# Format classifier metrics table ----
+eye_metrics <- round(conf_matrix_eye$byClass[, 1:7], 3)
+kable(eye_metrics, caption = "Eye Colour Classifier Metrics")
 ```
 
 ```{r include=FALSE}
@@ -133,49 +214,37 @@ kable(conf_matrix_eye_Illumina$table, caption = "Eye Colour - Illumina Predictio
 true_labels_eye <- test_data_eye$Eye.Self.ID 
 actual_mat_eye <- model.matrix(~ true_labels_eye - 1) 
 colnames(actual_mat_eye) <- levels(true_labels_eye)
-
-# ROC plots
-
-par(mfrow=c(1, length(levels(true_labels_eye)))) 
-roc_list_eye <- list()
-auc_list_eye <- c()
 ```
 
-```{r}
+```{r roc-plots-eye}
+# ROC plots
+
+roc_list_eye <- list()
+auc_list_eye <- c()
+roc_list_plot <- list()
+roc_objects <- list()
+auc_values <- list()
+
 for (class in levels(true_labels_eye)) {
-  roc_obj <- roc(actual_mat_eye[, class], prob_eye[, class]) 
+  roc_obj <- suppressMessages(roc(actual_mat_eye[, class], prob_eye[, class]))
   auc_val <- auc(roc_obj) 
-  plot(roc_obj, main = paste("Eye -", class, "\nAUC:",round(auc_val, 3)), col = "blue", lwd = 2) 
+  roc_plot <- ggroc(roc_obj) +
+    ggtitle(paste("Eye -", class, "AUC:", round(auc_val, 3))) +
+    theme_minimal() +
+    theme(plot.title = element_text(size = 10)) +
+    xlab("False Positive Rate") +
+    ylab("True Positive Rate")
   roc_list_eye[[class]] <- roc_obj 
   auc_list_eye[class] <- auc_val 
+  roc_list_plot[[class]] <- roc_plot
 }
+
+roc_list_plot[["Blue"]] | roc_list_plot[["Brown"]] | roc_list_plot[["Intermediate"]]
+
 
 kable(as.data.frame(auc_list_eye),
   col.names = c("AUC"), caption = "Eye Colour - AUC per Class")
 ```
 
-```{r include=FALSE}
-true_labels_hair <- test_data_hair$Hair.Self.ID 
-actual_mat_hair <- model.matrix(~ true_labels_hair - 1) 
-colnames(actual_mat_hair) <- levels(true_labels_hair)
-
-# ROC plots
-
-par(mfrow=c(1, length(levels(true_labels_hair)))) 
-roc_list_hair <-list() 
-auc_list_hair <- c()
-```
-
-```{r}
-for (class in levels(true_labels_hair)) {
-  roc_obj <- roc(actual_mat_hair[, class], prob_hair[, class]) 
-  auc_val <- auc(roc_obj) 
-  plot(roc_obj, main = paste("Hair -", class, "\nAUC:",round(auc_val, 3)), col = "blue", lwd = 2) 
-  roc_list_hair[[class]] <- roc_obj 
-  auc_list_hair[class] <- auc_val 
-}
-```
-
-```{r}
-kable(as.data.frame(auc_list_hair), col.names = c("AUC"), caption ="Hair Colour - AUC per Class")
-```
+## Conclusions 
+The interpretation of these results is limited due to the small sample size overall. The current metrics show the RF model is most effective at classifying brown eyes and black hair. If this trend holds true in a larger sample, this would indicate that the 24 SNPs utilized in this study are most informative for brown eyes and black hair, but less informative for other hair and eye colour classes. The addition of more SNPs to phenotyping panels may assist in more effective classification of blonde and brown hair, and intermediate and blue eyes. 
